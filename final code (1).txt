@@ -1,0 +1,277 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+// ==========================
+// Wi-Fi SETTINGS
+// ==========================
+const char* WIFI_SSID = "Navaneesh";
+const char* WIFI_PASSWORD = "12345678";
+
+// ==========================
+// MQTT SETTINGS
+// ==========================
+const char* MQTT_SERVER = "broker.hivemq.com";
+const int MQTT_PORT = 1883;
+
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
+
+// ==========================
+// MQTT TOPICS
+// ==========================
+const char* MOVEMENT_TOPIC = "home/sensor/movement";
+const char* VIBRATION_TOPIC = "home/sensor/vibration";
+const char* ACCELERATION_TOPIC = "home/sensor/acceleration";
+const char* MOTION_TOPIC = "home/motion";
+const char* DOOR_TOPIC = "home/door";
+
+// ==========================
+// FUNCTIONS
+// ==========================
+
+int calculateTrust(int value) {
+
+  if (value < 20)
+    return 100;
+
+  else if (value < 40)
+    return 85;
+
+  else if (value < 60)
+    return 70;
+
+  else if (value < 80)
+    return 50;
+
+  else
+    return 25;
+}
+
+
+// Generate a virtual sensor value
+int generateSensorValue() {
+
+  int value = random(0, 101);
+
+  return value;
+}
+
+
+// ==========================
+// WIFI
+// ==========================
+
+void connectWiFi() {
+
+  Serial.println();
+  Serial.print("Connecting to Wi-Fi");
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  while (WiFi.status() != WL_CONNECTED) {
+
+    delay(500);
+
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.println("Wi-Fi Connected!");
+
+  Serial.print("ESP32 IP: ");
+  Serial.println(WiFi.localIP());
+}
+
+
+// ==========================
+// MQTT
+// ==========================
+
+void connectMQTT() {
+
+  while (!mqttClient.connected()) {
+
+    Serial.print("Connecting to MQTT...");
+
+    String clientID = "ESP32-TrustNode-";
+    clientID += String(random(1000, 9999));
+
+    if (mqttClient.connect(clientID.c_str())) {
+
+      Serial.println("Connected!");
+
+    } else {
+
+      Serial.print("Failed, state = ");
+      Serial.println(mqttClient.state());
+
+      delay(3000);
+    }
+  }
+}
+
+
+// ==========================
+// SETUP
+// ==========================
+
+void setup() {
+
+  Serial.begin(115200);
+
+  randomSeed(analogRead(0));
+
+  connectWiFi();
+
+  mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+
+  connectMQTT();
+
+  Serial.println();
+  Serial.println("==============================");
+  Serial.println("   ESP32 TRUST SENSOR NODE");
+  Serial.println("==============================");
+}
+
+
+// ==========================
+// LOOP
+// ==========================
+
+void loop() {
+
+  if (!mqttClient.connected()) {
+
+    connectMQTT();
+  }
+
+  mqttClient.loop();
+
+  // --------------------------------
+  // Generate 3 virtual sensors
+  // --------------------------------
+
+  int movement = generateSensorValue();
+
+  int vibration = generateSensorValue();
+
+  int acceleration = generateSensorValue();
+
+
+  // --------------------------------
+  // Calculate individual trust
+  // --------------------------------
+
+  int movementTrust = calculateTrust(movement);
+
+  int vibrationTrust = calculateTrust(vibration);
+
+  int accelerationTrust = calculateTrust(acceleration);
+
+
+  // --------------------------------
+  // Combined Trust Score
+  // --------------------------------
+
+  int combinedTrust =
+      (movementTrust * 35 +
+       vibrationTrust * 30 +
+       accelerationTrust * 35) / 100;
+
+
+  // --------------------------------
+  // Detect movement
+  // --------------------------------
+
+  bool movementDetected =
+      movement > 50 ||
+      vibration > 50 ||
+      acceleration > 50;
+
+
+  // --------------------------------
+  // Publish sensor values
+  // --------------------------------
+
+  char buffer[10];
+
+  sprintf(buffer, "%d", movement);
+  mqttClient.publish(MOVEMENT_TOPIC, buffer);
+
+  sprintf(buffer, "%d", vibration);
+  mqttClient.publish(VIBRATION_TOPIC, buffer);
+
+  sprintf(buffer, "%d", acceleration);
+  mqttClient.publish(ACCELERATION_TOPIC, buffer);
+
+
+  // --------------------------------
+  // Publish motion status
+  // --------------------------------
+
+  if (movementDetected) {
+
+    mqttClient.publish(MOTION_TOPIC, "DETECTED");
+
+  } else {
+
+    mqttClient.publish(MOTION_TOPIC, "NORMAL");
+  }
+
+
+  // --------------------------------
+  // Simulated door state
+  // --------------------------------
+
+  // Mostly CLOSED, occasionally OPEN
+  int doorRandom = random(0, 10);
+
+  if (doorRandom < 8) {
+
+    mqttClient.publish(DOOR_TOPIC, "CLOSED");
+
+  } else {
+
+    mqttClient.publish(DOOR_TOPIC, "OPEN");
+  }
+
+
+  // --------------------------------
+  // Serial Monitor
+  // --------------------------------
+
+  Serial.println();
+  Serial.println("--------------------------------");
+
+  Serial.print("Movement       : ");
+  Serial.print(movement);
+  Serial.print(" | Trust: ");
+  Serial.println(movementTrust);
+
+  Serial.print("Vibration      : ");
+  Serial.print(vibration);
+  Serial.print(" | Trust: ");
+  Serial.println(vibrationTrust);
+
+  Serial.print("Acceleration   : ");
+  Serial.print(acceleration);
+  Serial.print(" | Trust: ");
+  Serial.println(accelerationTrust);
+
+  Serial.println("--------------------------------");
+
+  Serial.print("Combined Trust : ");
+  Serial.print(combinedTrust);
+  Serial.println("/100");
+
+  Serial.print("Motion Status  : ");
+
+  if (movementDetected)
+    Serial.println("DETECTED");
+  else
+    Serial.println("NORMAL");
+
+  Serial.println("--------------------------------");
+
+  delay(3000);
+}
